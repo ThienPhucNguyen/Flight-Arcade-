@@ -1,0 +1,886 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <title>Flight Arcade</title>
+
+    <link rel="stylesheet" type="text/css" href="css/game.css">
+    <link rel="stylesheet" type="text/css" href="css/resultbox.css">
+    <link rel="stylesheet" type="text/css" href="css/instructionbox.css">
+
+    <script type="text/javascript" src="three/three.js"></script>
+
+    <script type="text/javascript" src="js/loaders/MTLLoader.js"></script>
+    <script type="text/javascript" src="js/loaders/OBJLoader.js"></script>
+    <script type="text/javascript" src="js/Detector.js"></script>
+    <script type="text/javascript" src="js/libs/stats.min.js"></script>
+    <script type="text/javascript" src="js/TweenMax.min.js"></script>
+
+    <script type="text/javascript" src="three/THREEx.KeyboardState.js"></script>
+    <script type="text/javascript" src="js/keycontrol.js"></script>
+
+    <script type="text/javascript" src="models/cloud.js"></script>
+    <script type="text/javascript" src="models/terrain.js"></script>
+    <script type="text/javascript" src="models/airplane.js"></script>
+    <script type="text/javascript" src="models/asteroid.js"></script>
+    <script type="text/javascript" src="models/enemy.js"></script>
+    <script type="text/javascript" src="models/laser.js"></script>
+    <script type="text/javascript" src="models/coin.js"></script>
+    <script type="text/javascript" src="models/particle.js"></script>
+
+</head>
+
+<body>
+<div id="result-box"></div>
+
+<div id="instruction-box"></div>
+
+<div class="game-holder" id="game-hold">
+    <div id="announce">
+        <div class="content" id="score">
+            <div class="label" id="score-label">score</div>
+            <div class="value" id="score-value">0</div>
+        </div>
+        <div class="content" id="energy">
+            <div class="label" id="energy-label">energy</div>
+            <div class="value" id="energy-value">
+                <div id="energy-bar"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="world"></div>
+</div>
+
+<script type="text/javascript">
+
+/** --------- **/
+/** CONSTANTS **/
+/** --------- **/
+
+/** colors constants **/
+Colors = {
+    red: 0xf25346,
+    white: 0xd8d0d1,
+    brown: 0x59332e,
+    brownDark: 0x23190f,
+    pink: 0xf5986e,
+    yellow: 0xf4ce39,
+    blue: 0x68c3c0,
+    cyan: 0x009999
+};
+
+/** game status **/
+GameStatus = {
+    PLAY: "playing",
+    OVER: "game_over",
+    WAIT: "waiting"
+};
+
+/** camera constants **/
+cameraPos = {x: 0, y: 85, z: 120};
+cameraSkewAngle = 0;
+fieldOfView = 60;
+nearPlane = 0.1;
+farPlane = 1000;
+
+/** light position **/
+lightPos = {x: -20, y: 100, z: 0};
+
+/** game constants **/
+defaultHeight = 60;
+displacementX = window.innerWidth / 7;
+displacementY = window.innerHeight / 5;
+
+pixelPerSec = 200;
+skewAngle = Math.PI / 15;
+
+coinDistanceTolerance = 25;
+asteroidDistanceTolerance = 20;
+terrainDistanceTolerance = 50;
+
+ratioSpeedMoving = 25;
+ratioSpeedEnergy = 0.3;
+
+/** particles constants **/
+particleSpeed = 80;
+particleSize = 6;
+nParticles = 100;
+
+/** --------- **/
+/** VARIABLES **/
+/** --------- **/
+
+/** UI **/
+var energyBar;
+var scoreField;
+
+/** three js related variables **/
+var scene;
+
+var camera;
+var aspectRatio;
+
+var renderer;
+
+/** light variables **/
+var ambientLight;
+var hemisphereLight;
+var shadowLight;
+
+/** screen size variables **/
+var winWidth;
+var winHeight;
+
+/** 3d object models **/
+var player;
+var terrains = [];
+var clouds = [];
+var asteroids = [];
+var lasers;
+var coinsSpawn = [];
+var particles = [];
+var particlesDirs = [];
+var collisionMeshList = [];
+
+/** game control variables **/
+var score;
+var energy;
+var status;
+var isShowInstruction = false;
+var isShowResult = false;
+var clock = new THREE.Clock(); // keep track of time
+
+/** ---------------------- **/
+/** INSTRUCTION AND RESULT **/
+/** ---------------------- **/
+
+/** show instruction box **/
+function showInstruction() {
+    var instructionBox = document.getElementById("instruction-box");
+    instructionBox.innerHTML = "<img src='textures/click.png'>";
+    instructionBox.innerHTML += "<br><br><img src='textures/instructions.png'>";
+
+    instructionBox.style.display = "block";
+    instructionBox.style.marginLeft = "-"
+        + parseInt(instructionBox.offsetWidth / 2)
+        + "px";
+    instructionBox.style.marginTop = "-"
+        + parseInt(instructionBox.offsetHeight / 2)
+        + "px";
+
+    isShowInstruction = true;
+}
+
+/** hide instruction box **/
+function hideInstruction() {
+    var instructionBox = document.getElementById("instruction-box");
+    instructionBox.style.display = "none";
+
+    isShowInstruction = false;
+}
+
+/** show result box **/
+function showResult(score) {
+    var resultBox = document.getElementById("result-box");
+    resultBox.innerHTML = "<img src='textures/game_over.png' alt='game_over'><br><br>";
+    var scoreStr = score.toString();
+    var imgStr = "";
+    for (var i = 0; i < scoreStr.length; ++i) {
+        var digit = scoreStr.substr(i, 1);
+        imgStr += "<img src='textures/" + digit + ".png'>";
+    }
+
+    resultBox.innerHTML += "<img src='textures/you_got.png'>"
+        + imgStr
+        + "<img src='textures/points.png'><br><br>";
+    resultBox.innerHTML += "<img src='textures/game_over_end.png'>";
+
+    resultBox.style.display = "block";
+    resultBox.style.marginLeft = "-"
+        + parseInt(resultBox.offsetWidth / 2)
+        + "px";
+    resultBox.style.marginTop = "-"
+        + parseInt(resultBox.offsetHeight / 2)
+        + "px";
+
+    isShowResult = true;
+}
+
+/** hide result box **/
+function hideResult() {
+    var resultBox = document.getElementById("result-box");
+    resultBox.style.display = "none";
+
+    isShowResult = false;
+}
+
+/** ------ **/
+/** EVENTS **/
+/** ------ **/
+
+/** prevent browser execute event default **/
+document.addEventListener('contextmenu', function (event) { event.preventDefault(); }, false);
+
+/** --------- **/
+/** FUNCTIONS **/
+/** --------- **/
+
+/** initialize basic scene three js variables **/
+function createScene() {
+    // get the width and the height of the screen
+    // use them to set up the aspect ratio of camera
+    // and size of the renderer
+    winWidth = window.innerWidth;
+    winHeight = window.innerHeight;
+
+    // create the scene
+    scene = new THREE.Scene();
+
+    // add the fog effect to the scene
+    // same color as the background color used in game.css
+    scene.fog = new THREE.Fog(0xf7d9aa, 100, 1000);
+
+    // create the camera
+    aspectRatio = winWidth / winHeight;
+    camera = new THREE.PerspectiveCamera(
+        fieldOfView,
+        aspectRatio,
+        nearPlane,
+        farPlane
+    );
+
+    // set position of the camera
+    camera.position.x = cameraPos.x;
+    camera.position.y = cameraPos.y;
+    camera.position.z = cameraPos.z;
+
+    camera.rotateX(-cameraSkewAngle);
+
+    // create the renderer
+    renderer = new THREE.WebGLRenderer({
+        // allow transparency to show the gradient background
+        // defined in game.css
+        alpha: true,
+
+        // activate the anti-aliasing (ky thuat giam rang cua)
+        // this make low performance but ok
+        antialias: true
+    });
+
+    //define renderer size
+    renderer.setSize(winWidth, winHeight);
+
+    // enable shadow rendering
+    renderer.shadowMapEnabled = true;
+
+    // add the DOM element of renderer to
+    // the container created in HTML
+    document.getElementById('world').appendChild(renderer.domElement);
+}
+
+/** create lights **/
+function createLights() {
+    // ambient light - environment light
+    ambientLight = new THREE.AmbientLight(Colors.white, 0.5);
+
+    // a hemisphere light is a gradient colored light
+    // parameters:
+    // sky color, ground color, intensity of the light
+    hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x000000, 0.9);
+
+    // a directional light shines from a specific direction
+    shadowLight = new THREE.DirectionalLight(0xffffff, 0.9);
+
+    // set the direction of the light
+    shadowLight.position.set(lightPos.x, lightPos.y, lightPos.z);
+
+    // allow shadow casting
+    shadowLight.castShadow = true;
+
+    //define the visible area of the projected shadow
+    shadowLight.shadowCameraLeft = -500;
+    shadowLight.shadowCameraRight = 500;
+    shadowLight.shadowCameraTop = 500;
+    shadowLight.shadowCameraBottom = -500;
+    shadowLight.shadowCameraNear = 1;
+    shadowLight.shadowCameraFar = 1000;
+
+    //define the resolution of the shadow;
+    // the higher the better but the more expensive and the lower performance
+    shadowLight.shadowMapWidth = 2048;
+    shadowLight.shadowMapHeight = 2048;
+
+    // activate the lights
+    scene.add(ambientLight);
+    //scene.add(hemisphereLight);
+    scene.add(shadowLight);
+}
+
+/** create clouds **/
+function createClouds() {
+    for (var z = -1000; z < 500; z += 200) {
+        // create new cloud
+        var nCloud = 3 + Math.random() * 10;
+        for (var i = 0; i < nCloud; ++i) {
+            var cloud = new Cloud();
+
+            // set the position
+            cloud.mesh.position.x = (-winWidth / 5) + Math.random() * (winWidth / 2);
+            cloud.mesh.position.y = 55 + Math.random() * (winHeight / 6);
+            cloud.mesh.position.z = z;
+
+            // set scale
+            var s = 0.5 + Math.random() * 2;
+            cloud.mesh.scale.set(s, s, s);
+
+            // add to the scene
+            scene.add(cloud.mesh);
+
+            // push to cloud array
+            clouds.push(cloud);
+        }
+    }
+}
+
+/** create terrains **/
+function createTerrains() {
+    for (var z = -1000; z < 500; z += 200) {
+        // create new terrain
+        var terrain = new Terrain();
+
+        // set the position
+        terrain.mesh.position.z = z;
+
+        // set scale
+        terrain.mesh.scale.set(winWidth / 45, winWidth / 55, winWidth / 50);
+
+        // add to the scene
+        scene.add(terrain.mesh);
+
+        // push to terrains array
+        terrains.push(terrain);
+    }
+}
+
+/** create air plane **/
+function createAirPlane() {
+    // create an airplane
+    player = new AirPlane();
+
+    // scale the plane
+    player.mesh.scale.set(0.15, 0.15, 0.15);
+
+    // set the position
+    player.mesh.position.set(0, 60, -10);
+    player.mesh.rotateY(Math.PI / 2);
+
+    // add to the scene
+    scene.add(player.mesh);
+}
+
+/** create enemies **/
+
+/** create asteroid **/
+function createAsteroids() {
+    for (var z = -1000; z < 500; z += (Math.random() * 500 + 300)) {
+        // create new asteroids
+        var nAsteroid = 3 + Math.random() * 6;
+        for (var i = 0; i < nAsteroid; ++i) {
+            var asteroid = new Asteroid();
+
+            // set the position
+            asteroid.mesh.position.x = (-winWidth / 5) + Math.random() * (winWidth / 3);
+            asteroid.mesh.position.y = 35 + Math.random() * (winHeight / 5);
+            asteroid.mesh.position.z = z;
+
+            // set scale
+            var s = 0.5 + Math.random() * 1.0;
+            asteroid.mesh.scale.set(s, s, s);
+
+            // add to the scene
+            scene.add(asteroid.mesh);
+
+            // push to cloud array
+            asteroids.push(asteroid);
+        }
+    }
+ }
+
+ /** create coins **/
+ function createCoins() {
+     var nCoinsHolder = 3 + Math.random() * 5;
+
+     for (var z = -1000; z < 500; z += (Math.random() * 400 + 300)) {
+         for (var i = 0; i < nCoinsHolder; ++i) {
+             var nCoin = 3 + Math.random() * 5;
+
+             var coinHolder = new CoinsHolder(nCoin);
+
+             // set position
+             coinHolder.mesh.position.x = (-winWidth / 5) + Math.random() * (winWidth / 2);
+             coinHolder.mesh.position.y = 35 + Math.random() * (winHeight / 6);
+             coinHolder.mesh.position.z = z;
+
+             coinsSpawn.push(coinHolder);
+
+             // add to the scene
+             scene.add(coinHolder.mesh);
+         }
+     }
+ }
+
+ /** create lasers **/
+ function createLasers() {
+     var nLaser = 4;
+
+     lasers = new LasersHolder(nLaser);
+
+     // set position of lasers
+     lasers.mesh.position = player.mesh.position.clone();
+
+     lasers.mesh.visible = false;
+
+     // add to the scene
+     scene.add(lasers.mesh);
+ }
+
+ /** shoot **/
+ function shoot() {
+     if (lasers.mesh.visible == false) {
+         lasers.mesh.visible = true;
+     }
+ }
+
+
+/** set some attributes for the game **/
+function setNewGame() {
+    score = 0;
+    energy = 100;
+    status = GameStatus.WAIT;
+    player.mesh.position.x = 0;
+    player.mesh.position.y = defaultHeight;
+    player.mesh.position.z = -10;
+}
+
+/** update clouds position **/
+function updateClouds() {
+    for (var i = 0; i < clouds.length; ++i) {
+        // move it forwards
+        clouds[i].mesh.position.z += 2.0;
+
+        // once the cloud too close, reset its z position
+        if (clouds[i].mesh.position.z > 500) {
+            // update cloud position
+            clouds[i].mesh.position.z -= 1000;
+            clouds[i].mesh.position.x = (-winWidth / 5) + Math.random() * (winWidth / 2);
+            clouds[i].mesh.position.y = 60 + Math.random() * (winHeight / 6);
+        }
+    }
+}
+
+/** update terrains position **/
+function updateTerrains() {
+    for (var i = 0; i < terrains.length; ++i) {
+        // move it forwards
+        terrains[i].mesh.position.z += 2.0;
+
+        // once the ground too close, reset its z position
+        if (terrains[i].mesh.position.z > 500)
+            terrains[i].mesh.position.z -= 1000;
+    }
+    /*var originPoint = player.mesh.position.clone();
+    //console.log(player.mesh.getObjectByName('collision_box').geometry.vertices.length);
+
+    for (var vertexIndex = 0; vertexIndex < player.mesh.getObjectByName('collision_box').geometry.vertices.length; ++vertexIndex)
+    {
+        var localVertex = player.mesh.getObjectByName('collision_box').geometry.vertices[vertexIndex].clone();
+        var globalVertex = localVertex.applyMatrix4( player.mesh.matrix );
+        var directionVector = globalVertex.sub( player.mesh.position );
+
+        var ray = new THREE.Raycaster( originPoint, directionVector.clone().normalize() );
+        var collisionResults = ray.intersectObjects(collisionMeshList);
+        console.log(collisionResults);
+        if ( collisionResults.length > 0 && collisionResults[0].distance < directionVector.length() )
+            console.log("hit");
+    }*/
+}
+
+/** update asteroid position and rotation **/
+function updateAsteroids() {
+    for (var i = 0; i < asteroids.length; ++i) {
+        // move it forwards
+        asteroids[i].mesh.position.z += 5.0;
+
+        // rotate around itself
+        asteroids[i].mesh.rotation.y += 0.1;
+
+        // check if asteroid is destroyed
+        var diffPos = lasers.mesh.position.clone().sub(asteroids[i].mesh.position.clone());
+        var d = diffPos.length();
+        if (d < asteroidDistanceTolerance && asteroids[i].mesh.visible == true && lasers.mesh.visible == true && status == GameStatus.PLAY) {
+            // update the score
+            score += 100;
+
+            // set asteroid appearance
+            asteroids[i].mesh.visible = false;
+
+            // explode asteroid
+            particles.push(new animateExplosion(asteroids[i].mesh.position.clone()));
+        }
+
+        // check if the player is crashed
+        diffPos = player.mesh.position.clone().sub(asteroids[i].mesh.position.clone());
+        d = diffPos.length();
+        if (d < asteroidDistanceTolerance && asteroids[i].mesh.visible == true && player.mesh.visible == true && status == GameStatus.PLAY) {
+            // update energy
+            energy -= 15;
+            energy = Math.max(0, energy);
+
+            // set asteroid appearance
+            asteroids[i].mesh.visible = false;
+
+            // check if the player is crashed
+            particles.push(new animateExplosion(asteroids[i].mesh.position.clone()));
+        }
+
+        // once the asteroid too close, reset its z position
+        if (asteroids[i].mesh.position.z > 500) {
+            // update asteroid position
+            asteroids[i].mesh.position.z -= 1000;
+            asteroids[i].mesh.position.x = (-winWidth / 5) + Math.random() * (winWidth / 3);
+            asteroids[i].mesh.position.y = 35 + Math.random() * (winHeight / 5);
+
+            if (asteroids[i].mesh.visible == false) {
+                asteroids[i].mesh.visible = true;
+            }
+        }
+    }
+}
+
+/** update coins **/
+function updateCoins() {
+    for (var i = 0; i < coinsSpawn.length; ++i) {
+        // move forwards
+        coinsSpawn[i].mesh.position.z += 2.0;
+
+        // rotate around itself
+        coinsSpawn[i].mesh.rotation.y += 0.2;
+
+        // check if plane go through coin
+        var diffPos = player.mesh.position.clone().sub(coinsSpawn[i].mesh.position.clone());
+        var d = diffPos.length();
+        if (d < coinDistanceTolerance && coinsSpawn[i].mesh.visible == true && status == GameStatus.PLAY) {
+            // update score
+            score += coinsSpawn[i].coinsPool.length * 10;
+
+            // update energy
+            energy += coinsSpawn[i].coinsPool.length;
+            energy = Math.min(energy, 100);
+
+            // set coin appearance
+            coinsSpawn[i].mesh.visible = false;
+        }
+
+        //once the coin too close, reset its z position
+        if (coinsSpawn[i].mesh.position.z > 500) {
+            // update asteroid position
+            coinsSpawn[i].mesh.position.z -= 1000;
+            coinsSpawn[i].mesh.position.x = (-winWidth / 5) + Math.random() * (winWidth / 2);
+            coinsSpawn[i].mesh.position.y = 35 + Math.random() * (winHeight / 6);
+
+            if (coinsSpawn[i].mesh.visible == false) {
+                coinsSpawn[i].mesh.visible = true;
+            }
+        }
+    }
+}
+
+/** update airplane **/
+function updateAirPlane() {
+    // make the plane's propeller to rotate
+    player.mesh.getObjectByName('plane_propeller').rotation.x += 0.8;
+
+    if (status == GameStatus.WAIT) {
+        player.mesh.visible = true;
+    }
+}
+
+/** update lasers **/
+function updateLasers() {
+    if (lasers.mesh.visible == true) {
+        lasers.mesh.position.z -= 10;
+    }
+    if (lasers.mesh.position.z < -500) {
+        lasers.mesh.position.z = player.mesh.position.z;
+        lasers.mesh.visible = false;
+    }
+    lasers.mesh.position.x = player.mesh.position.x;
+    lasers.mesh.position.y = player.mesh.position.y;
+}
+
+/** animate explosion **/
+function animateExplosion(pos) {
+    var geometry = new THREE.Geometry();
+
+    for (var i = 0; i < nParticles; ++i) {
+        var vertex = new THREE.Vector3();
+        vertex.x = pos.x;
+        vertex.y = pos.y;
+        vertex.z = pos.z;
+
+        geometry.vertices.push(vertex);
+
+        particlesDirs.push({
+            x: (Math.random() * particleSpeed) - (particleSpeed / 2),
+            y: (Math.random() * particleSpeed) - (particleSpeed / 2),
+            z: (Math.random() * particleSpeed) - (particleSpeed / 2)
+        });
+    }
+
+    var material = new THREE.PointsMaterial({
+        size: particleSize,
+        color: Colors.red
+    });
+
+    this.object = new THREE.Points(geometry, material);
+
+    this.status = true;
+
+    scene.add( this.object  );
+
+    this.update = function(){
+        if (this.status == true){
+            var pCount = nParticles;
+            while(pCount--) {
+                var particle =  this.object.geometry.vertices[pCount]
+                particle.y += particlesDirs[pCount].y;
+                particle.x += particlesDirs[pCount].x;
+                particle.z += particlesDirs[pCount].z;
+            }
+            this.object.geometry.verticesNeedUpdate = true;
+        }
+    }
+}
+
+/** update energy **/
+function updateEnergy() {
+    var deltaTime = clock.getDelta() * ratioSpeedEnergy;
+
+    if (energy < 50) {
+        energy -= (deltaTime * 10);
+    }
+    energy -= (deltaTime * 5);
+    energy = Math.max(0, energy);
+
+
+    // update energy bar
+    energyBar.style.right = (100 - energy) + "%";
+    energyBar.style.backgroundColor = (energy <= 50) ? "#f25346" : "#68c3c0";
+
+    if (energy < 30) {
+        energyBar.style.animationName = "blinking";
+    } else {
+        energyBar.style.animationName = "none";
+    }
+
+    // check if the plane is crashed
+    // game over
+    if (energy < 1) {
+        status = GameStatus.OVER;
+    }
+}
+
+/** update score value **/
+function updateScore() {
+    score += 1;
+
+    score = Math.floor(score);
+
+    // update UI
+    scoreField.innerHTML = score;
+
+}
+
+/** update particles **/
+function updateParticles() {
+    var pCount = particles.length;
+    while(pCount--) {
+        particles[pCount].update();
+    }
+}
+
+/** game over **/
+function gameOver() {
+    // set player invisible
+    player.mesh.visible = false;
+
+    // explode airplane
+    particles.push(new animateExplosion(player.mesh.position.clone()));
+
+    // show result
+    showResult(score);
+
+    status = GameStatus.WAIT;
+}
+
+/** animate the scene **/
+function animateScene() {
+    if (status == GameStatus.PLAY) {
+        // update score
+        updateScore();
+
+        // update energy
+        updateEnergy();
+    }
+
+    // update the plane
+    updateAirPlane();
+
+    // update lasers holder
+    updateLasers();
+
+    // loop through each clouds
+    updateClouds();
+
+    // loop through each terrains
+    updateTerrains();
+
+    // loop through each asteroids
+    updateAsteroids();
+
+    // update particle
+    updateParticles();
+
+    // loop through each coins
+    updateCoins();
+
+    if (status == GameStatus.OVER) {
+        gameOver();
+        setNewGame();
+    }
+
+    // loop through each enemy
+    //updateEnemy();
+}
+
+/** capture key pressed **/
+function captureKeyPressed() {
+    // get seconds
+    var deltaTime = clock.getDelta() * ratioSpeedMoving;
+
+    // move a distance per sec
+    var moveDistance = pixelPerSec * deltaTime;
+
+    // disable announce box/shoot
+    if (isSpaceKey) {
+        if (isShowInstruction) {
+            status = GameStatus.PLAY;
+            hideInstruction();
+        }
+        if (status == GameStatus.WAIT) {
+            hideResult();
+            isShowInstruction = true;
+        }
+    }
+    else {
+        player.mesh.rotation.z = 0;
+    }
+
+    // fire
+    if (isFKey) {
+        if (status == GameStatus.PLAY) {
+            shoot();
+        }
+    }
+
+    // move forwards/backwards/left/right
+    if (status == GameStatus.PLAY) {
+        if (isUpKey) {
+            if (player.mesh.position.y < displacementY) {
+                player.mesh.position.y += moveDistance;
+            }
+        }
+        if (isDownKey) {
+            if (player.mesh.position.y > 45) {
+                player.mesh.position.y -= moveDistance;
+            }
+        }
+        if (isLeftKey) {
+            if (player.mesh.position.x > -displacementX) {
+                player.mesh.position.x -= moveDistance;
+            }
+        }
+        if (isRightKey) {
+            if (player.mesh.position.x < displacementX) {
+                player.mesh.position.x += moveDistance;
+            }
+        }
+    }
+}
+
+/** render the scene **/
+function render() {
+    //get the frame
+    requestAnimationFrame(render);
+
+    //render the scene
+    renderer.render(scene, camera);
+
+    // animate the scene
+    animateScene();
+
+    // capture key pressed
+    captureKeyPressed();
+}
+
+function onWindowResize() {
+    // update renderer size and camera aspect
+    winWidth = window.innerWidth;
+    winHeight = window.innerHeight;
+
+    camera.aspect = winWidth / winHeight;
+    camera.updateProjectionMatrix();
+
+    renderer.setSize(winWidth, winHeight);
+}
+
+/** init **/
+function init() {
+    // UI
+    scoreField = document.getElementById("score-value");
+    energyBar = document.getElementById("energy-bar");
+
+    window.addEventListener('resize', onWindowResize);
+    document.addEventListener( 'keyup', keyUp, false );
+    document.addEventListener( 'keydown', keyDown, false );
+
+    showInstruction();
+
+    createScene();
+
+    createLights();
+
+    createClouds();
+
+    createTerrains();
+
+    createCoins();
+
+    createAsteroids();
+
+    createAirPlane();
+
+    setNewGame();
+
+    createLasers();
+
+    render();
+}
+
+window.onload = init;
+</script>
+
+</body>
+</html>
